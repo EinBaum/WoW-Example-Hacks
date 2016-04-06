@@ -1,0 +1,1 @@
+tcc -o AxisZ.exe lib/MemMgr.c lib/Misc.c lib/ObjMgr.c AxisZ.c -luser32 -ladvapi32

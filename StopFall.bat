@@ -1,0 +1,1 @@
+tcc -o StopFall.exe lib/MemMgr.c lib/Misc.c lib/ObjMgr.c StopFall.c -luser32 -ladvapi32

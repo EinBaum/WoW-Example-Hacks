@@ -1,0 +1,1 @@
+tcc -o Inject.exe lib/MemMgr.c lib/Misc.c lib/Inject.c lib/ObjMgr.c Inject.c -luser32 -ladvapi32
