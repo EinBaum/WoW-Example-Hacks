@@ -1,0 +1,1 @@
+tcc -o InjectLua.exe lib/MemMgr.c lib/Misc.c lib/Inject.c lib/ObjMgr.c InjectLua.c -luser32 -ladvapi32
