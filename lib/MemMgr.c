@@ -60,6 +60,10 @@ BOOL MemMgr_Write(HANDLE hProcess, MemMgr_Ptr offset, LPCVOID data, SIZE_T size)
 
 	return success;
 }
+BOOL MemMgr_Write32(HANDLE hProcess, MemMgr_Ptr offset, INT32 data)
+{
+	return MemMgr_Write(hProcess, offset, &data, sizeof(data));
+}
 
 MemMgr_Ptr MemMgr_Allocate(HANDLE hProcess, SIZE_T size)
 {
@@ -69,7 +73,7 @@ MemMgr_Ptr MemMgr_Allocate(HANDLE hProcess, SIZE_T size)
 		size,
 		MEM_COMMIT,
 		PAGE_EXECUTE_READWRITE);
-	
+
 	return (MemMgr_Ptr)ptr;
 }
 void MemMgr_Free(HANDLE hProcess, MemMgr_Ptr addr)

@@ -2,10 +2,16 @@
 #include "Inject.h"
 #include "Constants.h"
 
-#define Inject_detour_ptr		(0x6F9D81)
-#define Inject_detour_return		(0x6F9D87)
-#define Inject_detour_test		(0x7F0740)
+#define Inject_detour_ptr		(0x006F9D81)
+#define Inject_detour_return		(0x006F9D87)
 
+struct InjectInfo {
+	HANDLE hProcess;
+	MemMgr_Ptr ptrNewcode;
+	MemMgr_Ptr ptrCondition;
+	MemMgr_Ptr ptrCode;
+	MemMgr_Ptr func_CallLua;
+};
 
 static CHAR Inject_detour_code[] = {
 	0x68, 0, 0, 0, 0,		// PUSH xxxx
@@ -34,82 +40,113 @@ static SIZE_T Inject_newcode_offset_condition	= 2;
 static SIZE_T Inject_newcode_offset_code	= 17;
 static SIZE_T Inject_newcode_offset_ret		= 25;
 
-static BOOL bInitialized = FALSE;
-static MemMgr_Ptr ptrNewcode;
-static MemMgr_Ptr ptrCondition;
-static MemMgr_Ptr ptrCode;
+static CHAR Inject_lua_code[] = {
+	0xB9, 0, 0, 0, 0,		// MOV ECX, xxxx
+	0xB8, 0xD0, 0x4C, 0x70, 0x00,	// MOV EAX, DoString (704CD0)
+	0xFF, 0xD0,			// CALL EAX
+	0xC3,				// RETN
+};
+static SIZE_T Inject_lua_size = sizeof(Inject_lua_code);
+static SIZE_T Inject_lua_offset_string = 1;
 
-BOOL Inject_IsInitialized(HANDLE hProcess)
+struct InjectInfo* Inject_Initialize(HANDLE hProcess)
 {
-	return bInitialized;
-}
-BOOL Inject_Initialize(HANDLE hProcess)
-{
-	if (Inject_IsInitialized(hProcess))
-		return TRUE;
+	struct InjectInfo *info = (struct InjectInfo*)calloc(1, sizeof(struct InjectInfo));
+	info->hProcess = hProcess;
 
-	if ((ptrNewcode = MemMgr_Allocate(hProcess, Inject_newcode_size)) == 0)
-		return FALSE;
+	if ((info->ptrNewcode = MemMgr_Allocate(hProcess, Inject_newcode_size)) == 0)
+		goto init_error;
 
-	if ((ptrCondition = MemMgr_Allocate(hProcess, 1)) == 0)
-		return FALSE;
+	if ((info->ptrCondition = MemMgr_Allocate(hProcess, 1)) == 0)
+		goto init_error;
 
-	if ((ptrCode = MemMgr_Allocate(hProcess, 4)) == 0)
-		return FALSE;
+	if ((info->ptrCode = MemMgr_Allocate(hProcess, 4)) == 0)
+		goto init_error;
 
-	*((MemMgr_Ptr*)(Inject_newcode_code + Inject_newcode_offset_condition))	= ptrCondition;
-	*((MemMgr_Ptr*)(Inject_newcode_code + Inject_newcode_offset_code))	= ptrCode;
+	*((MemMgr_Ptr*)(Inject_newcode_code + Inject_newcode_offset_condition))	= info->ptrCondition;
+	*((MemMgr_Ptr*)(Inject_newcode_code + Inject_newcode_offset_code))	= info->ptrCode;
 	*((MemMgr_Ptr*)(Inject_newcode_code + Inject_newcode_offset_ret))	= Inject_detour_return;
 
-	if (!MemMgr_Write(hProcess, ptrNewcode, Inject_newcode_code, Inject_newcode_size))
-		return FALSE;
+	if (!MemMgr_Write(hProcess, info->ptrNewcode, Inject_newcode_code, Inject_newcode_size))
+		goto init_error;
 
-	*((MemMgr_Ptr*)(Inject_detour_code + Inject_detour_offset_ret)) = ptrNewcode;
+	*((MemMgr_Ptr*)(Inject_detour_code + Inject_detour_offset_ret)) = info->ptrNewcode;
 
 	if (!MemMgr_Write(hProcess, Inject_detour_ptr, Inject_detour_code, Inject_detour_size))
-		return FALSE;
+		goto init_error;
 
-	bInitialized = TRUE;
-	return TRUE;
+	return info;
+
+init_error:
+	free(info);
+	return NULL;
 }
-MemMgr_Ptr Inject_CodeCreate(HANDLE hProcess, LPVOID code, SIZE_T len)
+void Inject_Free(struct InjectInfo *info)
+{
+	free(info);
+}
+MemMgr_Ptr Inject_CodeCreate(struct InjectInfo *info, LPVOID code, SIZE_T len)
 {
 	MemMgr_Ptr ptr;
 
-	if ((ptr = MemMgr_Allocate(hProcess, len)) == 0)
+	if ((ptr = MemMgr_Allocate(info->hProcess, len)) == 0)
 		return 0;
 
-	if (!MemMgr_Write(hProcess, ptr, code, len))
+	if (!MemMgr_Write(info->hProcess, ptr, code, len))
 		return 0;
 
 	return ptr;
 }
-BOOL Inject_CodeExecute(HANDLE hProcess, MemMgr_Ptr codePtr)
+BOOL Inject_CodeExecute(struct InjectInfo *info, MemMgr_Ptr codePtr)
 {
-	static CHAR cond = 1;
-	
-	if (!Inject_Initialize(hProcess))
+	static const INT32 cond = 1;
+
+	if (!MemMgr_Write32(info->hProcess, info->ptrCode, codePtr))
 		return FALSE;
 
-	if (!MemMgr_Write(hProcess, ptrCode, &codePtr, sizeof(codePtr)))
-		return FALSE;
-
-	if (!MemMgr_Write(hProcess, ptrCondition, &cond, sizeof(cond)))
+	if (!MemMgr_Write32(info->hProcess, info->ptrCondition, cond))
 		return FALSE;
 
 	return TRUE;
 }
-BOOL Inject_IsCodeExecuting(HANDLE hProcess)
+
+BOOL Inject_CodeExecuteWait(struct InjectInfo *info, MemMgr_Ptr codePtr, DWORD msTick)
 {
-	return Inject_IsInitialized(hProcess)
-		&& (MemMgr_Read8(hProcess, ptrCondition) != 0);
+	if (!Inject_CodeExecute(info, codePtr))
+		return FALSE;
+
+	while (Inject_IsCodeExecuting(info))
+		Sleep(msTick);
+
+	return TRUE;
+}
+BOOL Inject_IsCodeExecuting(struct InjectInfo *info)
+{
+	return MemMgr_Read8(info->hProcess, info->ptrCondition) != 0;
 }
 
-MemMgr_Ptr Inject_LuaCreate(HANDLE hProcess, LPSTR lua, SIZE_T len)
+MemMgr_Ptr Inject_LuaCreate(struct InjectInfo *info, LPSTR stringLua, SIZE_T stringLen)
 {
-	return Inject_CodeCreate(hProcess, lua, len);
+	MemMgr_Ptr stringPtr;
+
+	if (info->func_CallLua == NULL)
+	{
+		if ((info->func_CallLua = Inject_CodeCreate(info, Inject_lua_code, Inject_lua_size)) == 0)
+			return FALSE;
+	}
+
+	if ((stringPtr = Inject_CodeCreate(info, stringLua, stringLen)) == 0)
+		return FALSE;
+
+	return stringPtr;
 }
-BOOL Inject_LuaExecute(HANDLE hProcess, MemMgr_Ptr luaPtr)
+BOOL Inject_LuaExecute(struct InjectInfo *info, MemMgr_Ptr stringPtr)
 {
-	return FALSE;
+	if (!MemMgr_Write32(info->hProcess, info->func_CallLua + Inject_lua_offset_string, stringPtr))
+		return FALSE;
+
+	if (!Inject_CodeExecute(info, info->func_CallLua))
+		return FALSE;
+
+	return TRUE;
 }

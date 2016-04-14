@@ -20,6 +20,8 @@ VOID DoInject(HWND hWnd)
 {
 	HANDLE hProcess = NULL;
 	DWORD processId = 0;
+	struct InjectInfo *info;
+	MemMgr_Ptr codePtr;
 
 	GetWindowThreadProcessId(hWnd, &processId);
 	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
@@ -30,22 +32,20 @@ VOID DoInject(HWND hWnd)
 		return FALSE;
 	}
 
-	if (!Inject_Initialize(hProcess))
+	if ((info = Inject_Initialize(hProcess)) == NULL)
 	{
 		printf("Initialize failed");
 		return FALSE;
 	}
 	
-	MemMgr_Ptr codePtr;
-	
-	if ((codePtr = Inject_CodeCreate(hProcess, test1, test1_-test1)) == 0)
+	if ((codePtr = Inject_CodeCreate(info, test1, test1_-test1)) == 0)
 	{
 		printf("CodeCreate failed");
 		return FALSE;
 	}
 	
 	for (;;) {
-		if (!Inject_CodeExecute(hProcess, codePtr))
+		if (!Inject_CodeExecute(info, codePtr))
 		{
 			printf("CodeExecute failed");
 			return FALSE;
@@ -55,6 +55,7 @@ VOID DoInject(HWND hWnd)
 	
 	printf("Success.\n");
 
+	Inject_Free(info);
 	CloseHandle(hProcess);
 }
 
