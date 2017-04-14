@@ -7,10 +7,15 @@
 
 struct InjectInfo {
 	HANDLE hProcess;
+
+	void *oldDetourCode;
+
 	MemMgr_Ptr ptrNewcode;
 	MemMgr_Ptr ptrCondition;
 	MemMgr_Ptr ptrCode;
-	MemMgr_Ptr func_CallLua;
+
+	MemMgr_Ptr func_DoString;
+	MemMgr_Ptr func_RegisterFunction;
 };
 
 static CHAR Inject_detour_code[] = {
@@ -41,13 +46,24 @@ static SIZE_T Inject_newcode_offset_code	= 17;
 static SIZE_T Inject_newcode_offset_ret		= 25;
 
 static CHAR Inject_lua_code[] = {
-	0xB9, 0, 0, 0, 0,		// MOV ECX, xxxx
-	0xB8, 0xD0, 0x4C, 0x70, 0x00,	// MOV EAX, DoString (704CD0)
+	0xB9, 0, 0, 0, 0,		// MOV ECX, xxxx (lua string)
+	0xB8, 0xD0, 0x4C, 0x70, 0x00,	// MOV EAX, DoString (00704CD0)
 	0xFF, 0xD0,			// CALL EAX
 	0xC3,				// RETN
 };
 static SIZE_T Inject_lua_size = sizeof(Inject_lua_code);
 static SIZE_T Inject_lua_offset_string = 1;
+
+static CHAR Inject_func_code[] = {
+	0xB9, 0, 0, 0, 0,		// MOV ECX, xxxx (function name string)
+	0xBA, 0, 0, 0, 0,		// MOV EDX, xxxx (function pointer)
+	0xB8, 0x20, 0x41, 0x70, 0x00,	// MOV EAX, RegisterFunction (00704120)
+	0xFF, 0xD0,			// CALL EAX
+	0xC3,				// RETN
+};
+static SIZE_T Inject_func_size = sizeof(Inject_func_code);
+static SIZE_T Inject_func_offset_name = 1;
+static SIZE_T Inject_func_offset_func = 6;
 
 struct InjectInfo* Inject_Initialize(HANDLE hProcess)
 {
@@ -72,6 +88,10 @@ struct InjectInfo* Inject_Initialize(HANDLE hProcess)
 
 	*((MemMgr_Ptr*)(Inject_detour_code + Inject_detour_offset_ret)) = info->ptrNewcode;
 
+	info->oldDetourCode = (void*)malloc(Inject_detour_size);
+	if (!MemMgr_Read(hProcess, Inject_detour_ptr, info->oldDetourCode, Inject_detour_size))
+		goto init_error;
+
 	if (!MemMgr_Write(hProcess, Inject_detour_ptr, Inject_detour_code, Inject_detour_size))
 		goto init_error;
 
@@ -83,6 +103,18 @@ init_error:
 }
 void Inject_Free(struct InjectInfo *info)
 {
+	if (info == NULL)		return;
+	if (info->hProcess == NULL)	return;
+
+	if (info->oldDetourCode)	MemMgr_Write(info->hProcess, Inject_detour_ptr, info->oldDetourCode, Inject_detour_size);
+
+	if (info->ptrNewcode)		MemMgr_Free(info->hProcess, info->ptrNewcode);
+	if (info->ptrCondition)		MemMgr_Free(info->hProcess, info->ptrCondition);
+	if (info->ptrCode)		MemMgr_Free(info->hProcess, info->ptrCode);
+
+	if (info->func_DoString)	MemMgr_Free(info->hProcess, info->func_DoString);
+	if (info->func_RegisterFunction)MemMgr_Free(info->hProcess, info->func_RegisterFunction);
+
 	free(info);
 }
 MemMgr_Ptr Inject_CodeCreate(struct InjectInfo *info, LPVOID code, SIZE_T len)
@@ -97,7 +129,7 @@ MemMgr_Ptr Inject_CodeCreate(struct InjectInfo *info, LPVOID code, SIZE_T len)
 
 	return ptr;
 }
-BOOL Inject_CodeExecute(struct InjectInfo *info, MemMgr_Ptr codePtr)
+BOOL Inject_CodeExecute(struct InjectInfo *info, MemMgr_Ptr codePtr, DWORD msTick)
 {
 	static const INT32 cond = 1;
 
@@ -105,14 +137,6 @@ BOOL Inject_CodeExecute(struct InjectInfo *info, MemMgr_Ptr codePtr)
 		return FALSE;
 
 	if (!MemMgr_Write32(info->hProcess, info->ptrCondition, cond))
-		return FALSE;
-
-	return TRUE;
-}
-
-BOOL Inject_CodeExecuteWait(struct InjectInfo *info, MemMgr_Ptr codePtr, DWORD msTick)
-{
-	if (!Inject_CodeExecute(info, codePtr))
 		return FALSE;
 
 	while (Inject_IsCodeExecuting(info))
@@ -124,28 +148,64 @@ BOOL Inject_IsCodeExecuting(struct InjectInfo *info)
 {
 	return MemMgr_Read8(info->hProcess, info->ptrCondition) != 0;
 }
+void Inject_CodeFree(struct InjectInfo *info, MemMgr_Ptr codePtr)
+{
+	MemMgr_Free(info->hProcess, codePtr);
+}
 
-MemMgr_Ptr Inject_LuaCreate(struct InjectInfo *info, LPSTR stringLua, SIZE_T stringLen)
+MemMgr_Ptr Inject_LuaCreate(struct InjectInfo *info, LPSTR stringLua, SIZE_T stringSize)
 {
 	MemMgr_Ptr stringPtr;
 
-	if (info->func_CallLua == NULL)
+	if (info->func_DoString == NULL)
 	{
-		if ((info->func_CallLua = Inject_CodeCreate(info, Inject_lua_code, Inject_lua_size)) == 0)
+		if ((info->func_DoString = Inject_CodeCreate(info, Inject_lua_code, Inject_lua_size)) == 0)
 			return FALSE;
 	}
 
-	if ((stringPtr = Inject_CodeCreate(info, stringLua, stringLen)) == 0)
+	if ((stringPtr = Inject_CodeCreate(info, stringLua, stringSize)) == 0)
 		return FALSE;
 
 	return stringPtr;
 }
-BOOL Inject_LuaExecute(struct InjectInfo *info, MemMgr_Ptr stringPtr)
+BOOL Inject_LuaExecute(struct InjectInfo *info, MemMgr_Ptr stringPtr, DWORD msTick)
 {
-	if (!MemMgr_Write32(info->hProcess, info->func_CallLua + Inject_lua_offset_string, stringPtr))
+	if (!MemMgr_Write32(info->hProcess, info->func_DoString + Inject_lua_offset_string, stringPtr))
 		return FALSE;
 
-	if (!Inject_CodeExecute(info, info->func_CallLua))
+	if (!Inject_CodeExecute(info, info->func_DoString, msTick))
+		return FALSE;
+
+	return TRUE;
+}
+BOOL Inject_LuaFunction(struct InjectInfo *info, LPSTR name, SIZE_T nameSize, LPVOID func, SIZE_T funcSize, UINT32 paramNum, DWORD msTick)
+{
+	MemMgr_Ptr namePtr, funcPtr;
+	SIZE_T pad = 4 - (nameSize % 4);
+	SIZE_T memSize = nameSize + pad + funcSize;
+
+	if ((namePtr = MemMgr_Allocate(info->hProcess, memSize)) == 0)
+		return FALSE;
+
+	if (!MemMgr_Write(info->hProcess, namePtr, name, nameSize))
+		return FALSE;
+
+	funcPtr = namePtr + pad + nameSize;
+
+	if (!MemMgr_Write(info->hProcess, funcPtr, func, funcSize))
+		return FALSE;
+
+	if (info->func_RegisterFunction == NULL)
+	{
+		if ((info->func_RegisterFunction = Inject_CodeCreate(info, Inject_func_code, Inject_func_size)) == 0)
+			return FALSE;
+	}
+	if (!MemMgr_Write32(info->hProcess, info->func_RegisterFunction + Inject_func_offset_name, namePtr))
+		return FALSE;
+	if (!MemMgr_Write32(info->hProcess, info->func_RegisterFunction + Inject_func_offset_func, funcPtr))
+		return FALSE;
+
+	if (!Inject_CodeExecute(info, info->func_RegisterFunction, msTick))
 		return FALSE;
 
 	return TRUE;

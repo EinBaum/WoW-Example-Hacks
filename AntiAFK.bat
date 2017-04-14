@@ -1,1 +1,1 @@
-tcc -o AntiAFK.exe lib/MemMgr.c lib/Misc.c lib/ObjMgr.c AntiAFK.c -luser32 -ladvapi32
+tcc -o bin/AntiAFK.exe lib/MemMgr.c lib/Misc.c lib/ObjMgr.c AntiAFK.c -luser32 -ladvapi32

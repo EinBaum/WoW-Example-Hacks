@@ -1,6 +1,10 @@
 
 #include "ObjMgr.h"
 
+BOOL MemMgr_Read(HANDLE hProcess, MemMgr_Ptr offset, LPVOID data, SIZE_T size)
+{
+	return ReadProcessMemory(hProcess, (LPVOID)offset, data, size, NULL);
+}
 INT8 MemMgr_Read8(HANDLE hProcess, MemMgr_Ptr offset)
 {
 	INT8 r;

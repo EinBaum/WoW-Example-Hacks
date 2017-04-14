@@ -31,14 +31,14 @@ VOID DoInject(HWND hWnd)
 		return FALSE;
 	}
 
-	if ((stringPtr = Inject_LuaCreate(info, luaCode, strlen(luaCode))) == 0)
+	if ((stringPtr = Inject_LuaCreate(info, luaCode, strlen(luaCode) + 1)) == 0)
 	{
 		printf("LuaCreate failed");
 		return FALSE;
 	}
 
 	for (;;) {
-		if (!Inject_LuaExecute(info, stringPtr))
+		if (!Inject_LuaExecute(info, stringPtr, 10))
 		{
 			printf("LuaExecute failed");
 			return FALSE;

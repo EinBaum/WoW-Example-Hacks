@@ -3,6 +3,7 @@
 
 typedef UINT32 MemMgr_Ptr;
 
+BOOL		MemMgr_Read(HANDLE hProcess, MemMgr_Ptr offset, LPVOID data, SIZE_T size);
 INT8		MemMgr_Read8(HANDLE hProcess, MemMgr_Ptr offset);
 INT16		MemMgr_Read16(HANDLE hProcess, MemMgr_Ptr offset);
 INT32		MemMgr_Read32(HANDLE hProcess, MemMgr_Ptr offset);
