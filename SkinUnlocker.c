@@ -30,6 +30,15 @@ VOID DoInject(HWND hWnd)
 	MemMgr_Write(hProcess, 0x470FA9, &mov, 1);
 	MemMgr_Write(hProcess, 0x470FAA, &val, 4);
 
+	/* Secret name unlocker */
+
+	/* Old: 006C9A51     B8 06000000    MOV EAX,6	*/
+	/* New: 006C9A51     B8 0D000000    MOV EAX,0D	*/
+
+	UINT32 nameunlocker = 0x0000000D;
+	MemMgr_Write(hProcess, 0x6C9A52, &nameunlocker, 4);
+
+
 	printf("Success.\n");
 	CloseHandle(hProcess);
 }
