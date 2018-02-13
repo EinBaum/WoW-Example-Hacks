@@ -6,6 +6,8 @@
 #include "lib/Misc.h"
 #include "lib/Constants.h"
 
+FLOAT fovVal = 0;
+
 INT WindowIndex;
 
 BOOL FixFoV(HWND hWnd)
@@ -34,7 +36,6 @@ BOOL FixFoV(HWND hWnd)
 	INT32 off_cam = 0x00B4B2BC;
 	INT32 off_camFoV = 0x000065B8;
 	INT32 off_fovVal = 0x00000040;
-	FLOAT fovVal = 4;
 
 	INT32 camPtr = MemMgr_ReadPtr(hProcess, off_cam);
 	INT32 fovPtr = MemMgr_ReadPtr(hProcess, camPtr + off_camFoV);
@@ -64,6 +65,15 @@ int main(int argc, char* argv[])
 		printf("Run this program as Administrator.\n");
 		return 1;
 	}
+
+	printf("Enter FoV value between 0 and 3.14: ");
+
+	if (scanf("%f", &fovVal) != 1)
+	{
+		printf("Input error.\n");
+		return 1;
+	}
+
 	for (;;) {
 		system("cls");
 		WindowIndex = 1;
